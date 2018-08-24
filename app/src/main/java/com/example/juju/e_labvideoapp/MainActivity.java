@@ -14,18 +14,22 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.hardware.Camera;
 import android.hardware.Camera.CameraInfo;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.hardware.camera2.CameraDevice;
+import android.hardware.camera2.CaptureRequest;
 import android.media.CamcorderProfile;
 import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.SystemClock;
 import android.telephony.TelephonyManager;
+import android.util.Log;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.WindowManager;
@@ -50,6 +54,7 @@ import android.os.Bundle;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
+
 import java.util.Locale;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -74,6 +79,13 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     LocationListener locationListener;
     LocationManager LM;
+
+    private SensorManager sm;
+    //需要两个Sensor
+    private Sensor aSensor;
+    private Sensor mSensor;
+
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -96,7 +108,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 
         chrono = (Chronometer) findViewById(R.id.chronometer);
         txt = (TextView) findViewById(R.id.txt1);
-        txt.setTextColor(-16711936);
+        txt.setTextColor(Color.BLUE);
 
         vid = (ImageButton) findViewById(R.id.imageButton);
         vid.setVisibility(View.GONE);
@@ -108,7 +120,41 @@ public class MainActivity extends Activity implements SensorEventListener {
         */
 
 
+        sm = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        aSensor = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        mSensor = sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+
+        sm.registerListener(myListener, aSensor, SensorManager.SENSOR_DELAY_NORMAL);
+        sm.registerListener(myListener, mSensor, SensorManager.SENSOR_DELAY_NORMAL);
+        //更新显示数据的方法
+        calculateOrientation();
+
     }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // when on Pause, release camera in order to be used from other
+        // applications
+        releaseCamera();
+        sensorManager.unregisterListener(this);
+        sensorManager.unregisterListener(myListener);
+    }
+
+
+    final SensorEventListener myListener = new SensorEventListener() {
+        public void onSensorChanged(SensorEvent sensorEvent) {
+
+            if (sensorEvent.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD)
+                magneticFieldValues = sensorEvent.values;
+            if (sensorEvent.sensor.getType() == Sensor.TYPE_ACCELEROMETER)
+                accelerometerValues = sensorEvent.values;
+            calculateOrientation();
+        }
+
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {
+        }
+    };
 
 
     private int findBackFacingCamera() {
@@ -145,46 +191,39 @@ public class MainActivity extends Activity implements SensorEventListener {
         sensorManager.registerListener(this, rotv, SensorManager.SENSOR_DELAY_NORMAL);
 
 
-
         locationListener = new LocationListener() {
             public void onLocationChanged(Location location) {
                 // Called when a new location is found by the network location provider.
 
-                latitude  = location.getLatitude();
+                latitude = location.getLatitude();
                 longitude = location.getLongitude();
 
-                if(location.hasSpeed()) {
+                if (location.hasSpeed()) {
                     speed = location.getSpeed();
                 }
                 location.distanceBetween(latitude_original, longitude_original, latitude, longitude, dist);
             }
 
-            public void onStatusChanged(String provider, int status, Bundle extras) {}
+            public void onStatusChanged(String provider, int status, Bundle extras) {
+            }
 
-            public void onProviderEnabled(String provider) {}
+            public void onProviderEnabled(String provider) {
+            }
 
-            public void onProviderDisabled(String provider) {}
+            public void onProviderDisabled(String provider) {
+            }
         };
 
         // Acquire a reference to the system Location Manager
-        LM = (LocationManager)getSystemService(Context.LOCATION_SERVICE);
+        LM = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
 
         // Register the listener with the Location Manager to receive location updates
         LM.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, locationListener);
     }
 
-    @Override
-    protected void onPause() {
-        super.onPause();
-        // when on Pause, release camera in order to be used from other
-        // applications
-        releaseCamera();
-        sensorManager.unregisterListener(this);
-
-    }
 
     private boolean checkCameraHardware(Context context) {
-        if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA)){
+        if (context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA)) {
             // this device has a camera
             return true;
         } else {
@@ -194,6 +233,60 @@ public class MainActivity extends Activity implements SensorEventListener {
     }
 
 
+    private static final String TAG = "sensor>>>>>>>>>>";
+    float[] accelerometerValues = new float[3];
+    float[] magneticFieldValues = new float[3];
+
+    private void calculateOrientation() {
+        float[] values = new float[3];
+        float[] R = new float[9];
+        SensorManager.getRotationMatrix(R, null, accelerometerValues, magneticFieldValues);
+        SensorManager.getOrientation(R, values);
+
+        // 要经过一次数据格式的转换，转换为度
+        values[0] = (float) Math.toDegrees(values[0]);
+        values[1] = (float) Math.toDegrees(values[1]);
+        values[2] = (float) Math.toDegrees(values[2]);
+        Log.i(TAG, values[0] + "");
+        Log.i("TAG1>>>", values[1] + "");
+        Log.i("TAG2>>>", values[2] + "");
+        //values[1] = (float) Math.toDegrees(values[1]);
+        //values[2] = (float) Math.toDegrees(values[2]);
+
+        String dir = "";
+        if (values[0] >= -5 && values[0] < 5) {
+            Log.i(TAG, "正北");
+            dir = "正北";
+        } else if (values[0] >= 5 && values[0] < 85) {
+            Log.i(TAG, "东北");
+            dir = "东北";
+        } else if (values[0] >= 85 && values[0] <= 95) {
+            Log.i(TAG, "正东");
+            dir = "正东";
+        } else if (values[0] >= 95 && values[0] < 175) {
+            Log.i(TAG, "东南");
+            dir = "东南";
+        } else if ((values[0] >= 175 && values[0] <= 180) || (values[0]) >= -180 && values[0] < -175) {
+            Log.i(TAG, "正南");
+            dir = "正南";
+        } else if (values[0] >= -175 && values[0] < -95) {
+            Log.i(TAG, "西南");
+            dir = "西南";
+        } else if (values[0] >= -95 && values[0] < -85) {
+            Log.i(TAG, "正西");
+            dir = "正西";
+        } else if (values[0] >= -85 && values[0] < -5) {
+            Log.i(TAG, "西北");
+            dir = "西北";
+        }
+
+        ((TextView) findViewById(com.example.juju.e_labvideoapp.R.id.textView1)).setText("横滚值：" + String.valueOf(values[1]));
+        ((TextView) findViewById(com.example.juju.e_labvideoapp.R.id.textView2)).setText("俯仰角:" + String.valueOf(values[2]) );
+
+        ((TextView) findViewById(com.example.juju.e_labvideoapp.R.id.textView3)).setText("方向角:" + String.valueOf(values[0]));
+        ((TextView) findViewById(com.example.juju.e_labvideoapp.R.id.textView4)).setText("朝向:" + dir);
+    }
+
     boolean recording = false;
     OnClickListener captureListener = new OnClickListener() {
         @Override
@@ -201,6 +294,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 
             if (recording) {
                 // stop recording and release camera
+                mCamera.unlock();
                 mediaRecorder.stop(); // stop the recording
                 releaseMediaRecorder(); // release the MediaRecorder object
                 Toast.makeText(MainActivity.this, "Video captured!", Toast.LENGTH_LONG).show();
@@ -243,6 +337,11 @@ public class MainActivity extends Activity implements SensorEventListener {
                 });
                 Toast.makeText(MainActivity.this, "Recording...", Toast.LENGTH_LONG).show();
 
+                if (mCamera == null) {
+                    mCamera = Camera.open(findBackFacingCamera());
+                }
+
+                mCamera.lock();
                 Camera.Parameters params = mCamera.getParameters();
                 params.setPreviewFpsRange( 30000, 30000 ); // 30 fps
                 if ( params.isAutoExposureLockSupported() )
@@ -281,16 +380,16 @@ public class MainActivity extends Activity implements SensorEventListener {
 
         mediaRecorder.setAudioSource(MediaRecorder.AudioSource.CAMCORDER);
         mediaRecorder.setVideoSource(MediaRecorder.VideoSource.CAMERA);
-        if(quality == 0)
+        if (quality == 0)
             mediaRecorder.setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_1080P));
-        else if(quality == 1)
+        else if (quality == 1)
             mediaRecorder.setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_720P));
-        else if(quality == 2)
+        else if (quality == 2)
             mediaRecorder.setProfile(CamcorderProfile.get(CamcorderProfile.QUALITY_480P));
 
         //String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
 
-        mediaRecorder.setOutputFile(Environment.getExternalStorageDirectory().getPath()+"/elab/" + timeStampFile + "/" + timeStampFile  + ".mp4");
+        mediaRecorder.setOutputFile(Environment.getExternalStorageDirectory().getPath() + "/elab/" + timeStampFile + "/" + timeStampFile + ".mp4");
         mediaRecorder.setVideoFrameRate(VideoFrameRate);
         //mediaRecorder.setMaxDuration(5000);
 
@@ -326,7 +425,7 @@ public class MainActivity extends Activity implements SensorEventListener {
     double longitude_original = 0;
     //float distance = 0;
     float speed = 0;
-    float dist[] = {0,0,0};
+    float dist[] = {0, 0, 0};
     PrintWriter writer = null;
     long timechecker = 5000;
 
@@ -338,7 +437,7 @@ public class MainActivity extends Activity implements SensorEventListener {
             //longitude = location.getLongitude();
             //latitude = location.getLatitude();
             //if(location.hasSpeed()) {
-              //  speed = location.getSpeed();
+            //  speed = location.getSpeed();
             //}
             //dist[0] = (float) 0.0;
             /*
@@ -356,14 +455,14 @@ public class MainActivity extends Activity implements SensorEventListener {
             */
             String timeStamp = String.valueOf((new Date()).getTime());
             writer.println(timeStamp + "," +
-                           longitude_original + "," + latitude_original + "," +
-                           rotv_x + "," + rotv_y + "," + rotv_z + "," + rotv_w + "," + rotv_accuracy);
+                    longitude_original + "," + latitude_original + "," +
+                    rotv_x + "," + rotv_y + "," + rotv_z + "," + rotv_w + "," + rotv_accuracy);
         }
     }
 
     public void storeData() {
 
-        String filePath = Environment.getExternalStorageDirectory().getPath()+"/elab/" + timeStampFile + "/" + timeStampFile  +  ".csv";
+        String filePath = Environment.getExternalStorageDirectory().getPath() + "/elab/" + timeStampFile + "/" + timeStampFile + ".csv";
         try {
             writer = new PrintWriter(filePath);
         } catch (FileNotFoundException e) {
@@ -373,11 +472,11 @@ public class MainActivity extends Activity implements SensorEventListener {
         //writer.println("Longitude" + "," + "Latitude" + "," + "Speed" + "," + "Distance" + "," + "Time" + "," + "Acc X" + "," + "Acc Y" + "," + "Acc Z" + "," + "Heading"
         //        + "," + "gyro_x" + "," + "gyro_y" + "," + "gyro_z");
         writer.println("Timestamp" + "," +
-                       "Longitude" + "," + "Latitude" + "," +
-                       "RotationV X" + "," + "RotationV Y" + "," + "RotationV Z" + "," + "RotationV W" + "," + "RotationV Acc");
+                "Longitude" + "," + "Latitude" + "," +
+                "RotationV X" + "," + "RotationV Y" + "," + "RotationV Z" + "," + "RotationV W" + "," + "RotationV Acc");
         LocationManager original = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         Location original_location = original.getLastKnownLocation(LocationManager.GPS_PROVIDER);
-        if(original.getLastKnownLocation(LocationManager.GPS_PROVIDER) != null){
+        if (original.getLastKnownLocation(LocationManager.GPS_PROVIDER) != null) {
             latitude_original = original_location.getLatitude();
             longitude_original = original_location.getLongitude();
         }
@@ -429,7 +528,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if(event.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR) {
+        if (event.sensor.getType() == Sensor.TYPE_ROTATION_VECTOR) {
             rotv_x = event.values[0];
             rotv_y = event.values[1];
             rotv_z = event.values[2];
@@ -461,21 +560,20 @@ public class MainActivity extends Activity implements SensorEventListener {
         tv.setText(setTextText);
         */
     }
-    String[] options = {"1080p","720p","480p"};
-    String[] options1 = {"15 Hz","10 Hz"};
-    String[] options2 = {"10 fps","20 fps","30 fps"};
+
+    String[] options = {"1080p", "720p", "480p"};
+    String[] options1 = {"15 Hz", "10 Hz"};
+    String[] options2 = {"10 fps", "20 fps", "30 fps"};
 
 
-    public void addQuality(View view){
+    public void addQuality(View view) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         String setting = new String();
-        if(quality == 0) {
+        if (quality == 0) {
             setting = "1080p";
-        }
-        else if(quality == 1){
+        } else if (quality == 1) {
             setting = "720p";
-        }
-        else if(quality == 2){
+        } else if (quality == 2) {
             setting = "480p";
         }
         builder.setTitle("Pick Quality, Current setting: " + setting)
@@ -483,27 +581,24 @@ public class MainActivity extends Activity implements SensorEventListener {
                     public void onClick(DialogInterface dialog, int which) {
                         // The 'which' argument contains the index position
                         // of the selected item
-                        if(which == 0){
+                        if (which == 0) {
                             quality = 0;
-                        }
-                        else if (which == 1){
+                        } else if (which == 1) {
                             quality = 1;
-                        }
-                        else if (which == 2){
+                        } else if (which == 2) {
                             quality = 2;
                         }
                     }
                 });
         builder.show();
     }
-    public void addRate(View view)
-    {
+
+    public void addRate(View view) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         String setting = new String();
-        if(rate == 100) {
+        if (rate == 100) {
             setting = "10 Hz";
-        }
-        else if(rate == 67){
+        } else if (rate == 67) {
             setting = "15 Hz";
         }
         builder.setTitle("Pick Data Save Rate, Current setting: " + setting)
@@ -511,27 +606,24 @@ public class MainActivity extends Activity implements SensorEventListener {
                     public void onClick(DialogInterface dialog, int which) {
                         // The 'which' argument contains the index position
                         // of the selected item
-                        if(which == 0){
-                            rate = 67 ;
-                        }
-                        else if (which == 1){
+                        if (which == 0) {
+                            rate = 67;
+                        } else if (which == 1) {
                             rate = 100;
                         }
                     }
                 });
         builder.show();
     }
-    public void addFrameRate(View view)
-    {
+
+    public void addFrameRate(View view) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         String setting = new String();
-        if(VideoFrameRate == 10) {
+        if (VideoFrameRate == 10) {
             setting = "10 fps";
-        }
-        else if(VideoFrameRate == 20){
+        } else if (VideoFrameRate == 20) {
             setting = "20 fps";
-        }
-        else if(VideoFrameRate == 30){
+        } else if (VideoFrameRate == 30) {
             setting = "30 fps";
         }
         builder.setTitle("Pick Video fps, Current setting: " + setting)
@@ -539,13 +631,11 @@ public class MainActivity extends Activity implements SensorEventListener {
                     public void onClick(DialogInterface dialog, int which) {
                         // The 'which' argument contains the index position
                         // of the selected item
-                        if(which == 0){
-                            VideoFrameRate = 10 ;
-                        }
-                        else if (which == 1){
+                        if (which == 0) {
+                            VideoFrameRate = 10;
+                        } else if (which == 1) {
                             VideoFrameRate = 20;
-                        }
-                        else if (which == 2){
+                        } else if (which == 2) {
                             VideoFrameRate = 30;
                         }
                     }
